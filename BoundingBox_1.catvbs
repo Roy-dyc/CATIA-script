@@ -1,0 +1,508 @@
+'VBA inertial Bounding BOX 1.1 for catia VBScript
+
+Sub CATmain()
+    Dim oCATIA
+    Set oCATIA = CATIA
+
+    Dim oPartDocument 
+    Set oPartDocument = CATIA.ActiveDocument
+    
+    Dim oPart 
+    Set oPart = oPartDocument.Part
+    
+    Dim oBody 
+    
+    Dim inputType(0)
+    Set oPartDocument = CATIA.ActiveDocument
+    Dim iSel
+    Set iSel = oPartDocument.Selection
+    Dim selCount
+    
+    inputType(0) = "Body"
+    Dim myName()
+    Status = iSel.SelectElement2(inputType, "Select the body", True)
+
+    If Status = "Redo" Or Status = "Undo" Or Status = "Cancel" Then
+
+            Exit Sub
+    ElseIf Status = "Normal" Then
+        selCount = iSel.Count2
+        
+        If selCount = 1 Then
+            Set oBody = oPart.Bodies.Item(iSel.Item2(1).Value.Name)
+            If oBody.Shapes.Count = 0 Then
+                MsgBox "Empty!"
+                Exit Sub
+            Else
+                
+                getBoundingBox oPartDocument, oBody
+            End If
+        ElseIf selCount > 1 Then
+            
+            iSel.Copy
+            iSel.PasteSpecial "CATPrtResultWithOutLink"
+            For i = 1 To iSel.Count2
+                ReDim Preserve myName(i + 1)
+                myName(i - 1) = "temp_" & iSel.Item(i).Value.Name
+                iSel.Item(i).Value.Name = myName(i - 1)
+            Next
+            
+            Dim oShapeFactory 
+            Set oShapeFactory = oPart.ShapeFactory
+            
+            oPart.InWorkObject = oPart.Bodies.Item(myName(0))
+            
+            For i = 1 To selCount - 1:
+                oShapeFactory.AddNewAdd oPart.Bodies.Item(myName(i))
+            Next
+            oPart.Update
+            iSel.Clear
+            
+                                    
+            iSel.Add oPart.Bodies.Item(myName(0))
+            
+            iSel.Copy
+            iSel.PasteSpecial ("CATPrtResultWithOutLink")
+            
+            Dim copyBody 
+            Set copyBody = iSel.Item2(1).Value
+            copyBody.Name = "AddedParts"
+            
+            
+            iSel.Clear
+            For i = 0 To selCount - 1:
+                iSel.Add oPart.Bodies.Item(myName(i))
+            Next 
+
+            iSel.Delete
+            iSel.Clear
+            If copyBody.Shapes.Count = 0 Then
+                MsgBox "Empty!"
+                Exit Sub
+            Else
+                getBoundingBox oPartDocument, copyBody
+            End If
+            
+            iSel.Clear
+            iSel.Add copyBody
+            iSel.Delete
+            iSel.Clear
+            
+        End If
+        
+    End If
+    oPart.Update
+End Sub
+
+Function getBoundingBox(oPartDocument, oBody)
+
+   
+    Dim oSelection 
+    Set oSelection = oPartDocument.Selection
+    oSelection.Clear
+    
+    ' get the center of gravity of the oPartDocument
+    Dim COGArray
+    COGArray = Get_COG(oPartDocument)
+    'get the corrected principal axes of inertia
+    Dim PrincipalAxes_temp
+    PrincipalAxes_temp = Get_PrincipalAxes(oPartDocument)
+    Dim PrincipalAxes
+    PrincipalAxes = PrincipalAxesCorrection(PrincipalAxes_temp)
+     
+    Dim oPart 
+    Set oPart = oPartDocument.Part
+   
+    
+   
+    Dim oHybridBodies 
+    Set oHybridBodies = oPart.HybridBodies
+   
+    Dim oHybridBody 
+   
+    On Error Resume Next
+        Set oHybridBody = oHybridBodies.Item("Temp_Bounding_Box")
+        'if the "Inertial_Bounding_Box" HybridBody exist, the delete it.
+        If Err.Number = 0 Then
+            oSelection.Add oHybridBody
+            oSelection.Delete
+            oSelection.Clear
+        End If
+    On Error GoTo 0
+    
+    'create a new "Inertia_Bounding_Box" HybridBody
+    Set oHybridBody = oHybridBodies.Add
+    oHybridBody.Name = "Temp_Bounding_Box"
+   
+    Dim oHybridShapeFactory 
+    Set oHybridShapeFactory = oPart.HybridShapeFactory
+
+    'create the point of the COG
+    Dim oHybridshapePointCoord 
+    Set oHybridshapePointCoord = Build_COG(oHybridShapeFactory, COGArray)
+    
+    
+    Dim oChoice
+   
+    oChoice = InputBox("1:According to current Coordination;" & vbCrLf & "2:Get minimum bounding box;", "Please make a choice", "1")
+   Dim InertiaAxis(2) 
+    If oChoice = "2" Then
+    
+    'create the direction through the principal axes and the COG
+  
+    Set InertiaAxis(0) = Build_InertiaAxis(oHybridShapeFactory, oHybridshapePointCoord, PrincipalAxes, 1)
+    Set InertiaAxis(1) = Build_InertiaAxis(oHybridShapeFactory, oHybridshapePointCoord, PrincipalAxes, 2)
+    Set InertiaAxis(2) = Build_ThirdDirection_InertiaAxis(oHybridShapeFactory, oHybridshapePointCoord, InertiaAxis(0), InertiaAxis(1))
+    
+    ElseIf oChoice = "1" Then
+        Set InertiaAxis(0) = oHybridShapeFactory.AddNewLinePtPt(oHybridShapeFactory.AddNewPointCoord(-10000, 0, 0), oHybridShapeFactory.AddNewPointCoord(10000, 0, 0))
+        Set InertiaAxis(1) = oHybridShapeFactory.AddNewLinePtPt(oHybridShapeFactory.AddNewPointCoord(0, -10000, 0), oHybridShapeFactory.AddNewPointCoord(0, 10000, 0))
+        Set InertiaAxis(2) = oHybridShapeFactory.AddNewLinePtPt(oHybridShapeFactory.AddNewPointCoord(0, 0, -10000), oHybridShapeFactory.AddNewPointCoord(0, 0, 10000))
+        
+    Else
+    
+        MsgBox "输入错误，退出程序"
+    End If
+    
+    On Error GoTo 0
+    'create teh extremum throught the direction
+    Dim oExtremum(5) 
+    Set oExtremum(0) = Build_Extremums(oBody, oPart, oHybridShapeFactory, 1, InertiaAxis(0), InertiaAxis(1), InertiaAxis(2))
+    Set oExtremum(1) = Build_Extremums(oBody, oPart, oHybridShapeFactory, 0, InertiaAxis(0), InertiaAxis(1), InertiaAxis(2))
+    Set oExtremum(2) = Build_Extremums(oBody, oPart, oHybridShapeFactory, 1, InertiaAxis(1), InertiaAxis(2), InertiaAxis(0))
+    Set oExtremum(3) = Build_Extremums(oBody, oPart, oHybridShapeFactory, 0, InertiaAxis(1), InertiaAxis(2), InertiaAxis(0))
+    Set oExtremum(4) = Build_Extremums(oBody, oPart, oHybridShapeFactory, 1, InertiaAxis(2), InertiaAxis(0), InertiaAxis(1))
+    Set oExtremum(5) = Build_Extremums(oBody, oPart, oHybridShapeFactory, 0, InertiaAxis(2), InertiaAxis(0), InertiaAxis(1))
+
+  
+    
+    'build the reference plane of bounding box surface
+    Dim oFinalPlanes(5) 
+    Set oFinalPlanes(0) = Build_Planes(oHybridShapeFactory, oExtremum(0), InertiaAxis(0))
+    Set oFinalPlanes(1) = Build_Planes(oHybridShapeFactory, oExtremum(1), InertiaAxis(0))
+    Set oFinalPlanes(2) = Build_Planes(oHybridShapeFactory, oExtremum(2), InertiaAxis(1))
+    Set oFinalPlanes(3) = Build_Planes(oHybridShapeFactory, oExtremum(3), InertiaAxis(1))
+    Set oFinalPlanes(4) = Build_Planes(oHybridShapeFactory, oExtremum(4), InertiaAxis(2))
+    Set oFinalPlanes(5) = Build_Planes(oHybridShapeFactory, oExtremum(5), InertiaAxis(2))
+    
+    '
+    Dim oBaseLine 
+    Set oBaseLine = Build_LinePtDir(oHybridShapeFactory, oHybridshapePointCoord, oFinalPlanes(0), oFinalPlanes(1))
+   
+    Dim oExtrudedSurface 
+    Set oExtrudedSurface = Build_ExtrudedSurface(oHybridShapeFactory, oBaseLine, oFinalPlanes(2), oFinalPlanes(3))
+
+    Dim oFinalBoundingBox 
+    Set oFinalBoundingBox = Build_ExtrudedSurface(oHybridShapeFactory, oExtrudedSurface, oFinalPlanes(4), oFinalPlanes(5))
+    oHybridBody.AppendHybridShape oFinalBoundingBox
+    oPart.Update
+    
+    Dim oSPAWorkbench
+    Set oSPAWorkbench = oPartDocument.GetWorkbench("SPAWorkbench")
+    Dim oMeasurable
+    Dim disArr(2)
+    
+    For i = 0 To 5 Step 2
+        Set oMeasurable = oSPAWorkbench.GetMeasurable(oFinalPlanes(i))
+        disArr(i / 2) = oMeasurable.GetMinimumDistance(oFinalPlanes(i + 1))
+    Next
+    
+    Dim myResult
+    myResult = cstr(Round(disArr(0), 2)) & "*" & cstr(Round(disArr(1), 2)) & "*" & cstr(Round(disArr(2), 2))
+    Dim oDimension
+    Set oDimension = oPartDocument.Part.Parameters.CreateString(oBody.Name & "长宽高", myResult)
+    
+    'visualize the box
+    Dim oHB
+    Set oHB = oPartDocument.Part.HybridBodies.Item("Temp_Bounding_Box")
+    Dim oHBshape
+    Set oHBshape = oHB.HybridShapes.Item(1)
+    Dim oNHB
+    Set oNHB = oPartDocument.Part.HybridBodies.Add()
+    oNHB.Name = oBody.Name & "Bounding_Box"
+    oSelection.Add oHBshape
+    oSelection.Copy
+    oSelection.Clear
+    oSelection.Add oNHB
+    oSelection.PasteSpecial "CATPrtResultWithOutLink"
+    
+    Dim oVis
+    Set oVis = oSelection.VisProperties
+    oVis.SetRealOpacity 200, 0
+    
+    oSelection.Clear
+    oSelection.Add oHB
+    oSelection.Delete
+    oNHB.HybridShapes.Item(1).Name = oBody.Name & "_Bounding_Box"
+    
+    Exit Function
+error_handle:
+    MsgBox "输入错误，退出程序"
+    Exit Function
+   
+End Function
+
+
+'Private Function Get_PartDocument() As PartDocument
+'    'get the activated part document
+'    Dim oCATIA As Application
+'    Dim oDocument As Document
+'    Dim oSelection As Selection
+'    Dim oPart As Part
+'
+'    Set oCATIA = CATIA
+'
+'    On Error Resume Next ' when error happen, continue to do next events
+'
+'        Set oDocument = CATIA.ActiveDocument 'get the activated part document
+'
+'        If Err.Number <> 0 Then
+'
+'            MsgBox "There Is No Active Document In The Current Session, Exitting Script."
+'            End
+'
+'        End If
+'
+'    On Error GoTo 0 'when error happen in the later codes, let the system deal with the errors
+'
+'    Set oSelection = oDocument.Selection ' get selection class
+'    oSelection.Clear
+'
+'    '---------------------------------------------------'
+'
+'    If (InStr(oDocument.Name, ".CATPart")) = 0 Then  ' if the document don't belong the CATPart
+'
+'        oSelection.Search ("type=Part,in") ' then find part
+'
+'        On Error Resume Next
+'
+'            Set oPart = oSelection.FindObject("CATIAPart") 'get the CATIAPart object
+'
+'            If Err.Number <> 0 Then
+'
+'                MsgBox "A Part or Part Instance Must be Active." & vbLf & "Exiting The Script"
+'                oSelection.Clear
+'
+'                Exit Function 'if nothing found, then exit
+'
+'            End If
+'
+'        On Error GoTo 0
+'
+'    Else
+'
+'        Set oPart = oDocument.Part '' if the document belong the CATPart
+'
+'    End If
+'
+'    oSelection.Clear 'clear the selection container
+'
+'    '---------------------------------------------------'
+'
+'    Set Get_PartDocument = oPart.Parent
+'
+'    Set oPart = Nothing
+'    Set oSelection = Nothing
+'    Set oDocument = Nothing
+'    Set oCATIA = Nothing
+'
+'End Function
+
+Private Function Build_COG(oHybridShapeFactory, COGArray) 
+    'create the point of COG
+    Set Build_COG = oHybridShapeFactory.AddNewPointCoord(COGArray(0) * 1000, COGArray(1) * 1000, COGArray(2) * 1000)
+     Build_COG.Compute
+     Build_COG.Name = "COG"
+   
+End Function
+
+Private Function Get_COG(oPartDocument )
+    'retrieve the position of the center of gravity
+    Dim oSPAWorkbench  'The object to manage all Space Analysis objects.
+    Dim oMeasureable
+    Dim oInertias 
+    Dim oInertia 
+    Dim COGArray(2)
+   
+    Set oSPAWorkbench = oPartDocument.GetWorkbench("SPAWorkbench")
+    Set oInertias = oSPAWorkbench.Inertias
+   
+    oInertias.Add oPartDocument.Part.MainBody
+    Set oInertia = oInertias.Item(1)
+    oInertia.GetCOGPosition COGArray
+   
+    Get_COG = COGArray
+ 
+    oInertias.Remove oInertia.Name
+   
+    Set oInertia = Nothing
+    Set oInertias = Nothing
+    Set oMeasureable = Nothing
+    Set oSPAWorkbench = Nothing
+ 
+End Function
+
+
+Private Function Get_PrincipalAxes(oPartDocument)
+    ' retrieve the principal  axes of inertia
+    Dim oSPAWorkbench 
+    Dim oMeasureable 
+    Dim oInertias 
+    Dim oInertia 
+    Dim PrincipalAxes(8)
+   
+    Set oSPAWorkbench = oPartDocument.GetWorkbench("SPAWorkbench")
+    Set oInertias = oSPAWorkbench.Inertias
+   
+    oInertias.Add oPartDocument.Part
+    Set oInertia = oInertias.Item(1)
+    oInertia.GetPrincipalAxes PrincipalAxes
+ 
+    Get_PrincipalAxes = PrincipalAxes
+   
+    oInertias.Remove oInertia.Name
+   
+    Set oInertia = Nothing
+    Set oInertias = Nothing
+    Set oMeasureable = Nothing
+    Set oSPAWorkbench = Nothing
+ 
+End Function
+
+Private Function Build_InertiaAxis(oHybridShapeFactory , oPoint , PrincipleAxis, InertiaAxis )
+    'get the line according to the COG and principal axes
+    Dim dPrincipleAxis(2) 
+ 
+    Select Case InertiaAxis
+         Case 1
+             dPrincipleAxis(0) = PrincipleAxis(0)
+             dPrincipleAxis(1) = PrincipleAxis(1)
+             dPrincipleAxis(2) = PrincipleAxis(2)
+         Case 2
+             dPrincipleAxis(0) = PrincipleAxis(3)
+             dPrincipleAxis(1) = PrincipleAxis(4)
+             dPrincipleAxis(2) = PrincipleAxis(5)
+         Case Else
+             MsgBox "Error, Value Must Be 1 or 2."
+    End Select
+   
+    Dim oHybridshapeDirection 
+    Set oHybridshapeDirection = oHybridShapeFactory.AddNewDirectionByCoord(dPrincipleAxis(0), dPrincipleAxis(1), dPrincipleAxis(2))
+   
+    Set Build_InertiaAxis = oHybridShapeFactory.AddNewLinePtDir(oPoint, oHybridshapeDirection, 10000, -10000, True)
+    Build_InertiaAxis.Compute
+    Build_InertiaAxis.Name = "InertiaAxis-" & InertiaAxis
+End Function
+
+Private Function PrincipalAxesCorrection(PrincipalAxes_temp)
+    'get the cooresponding direction of principalAxesCorrection
+    Dim PrincipalAxes(8)
+    'Correct the X axis
+    PrincipalAxes(0) = PrincipalAxes_temp(0)
+    PrincipalAxes(1) = PrincipalAxes_temp(3)
+    PrincipalAxes(2) = PrincipalAxes_temp(6)
+
+    'Correct the Y axis
+    PrincipalAxes(3) = PrincipalAxes_temp(1)
+    PrincipalAxes(4) = PrincipalAxes_temp(4)
+    PrincipalAxes(5) = PrincipalAxes_temp(7)
+
+    'Correct the Z axis
+    PrincipalAxes(6) = PrincipalAxes_temp(2)
+    PrincipalAxes(7) = PrincipalAxes_temp(5)
+    PrincipalAxes(8) = PrincipalAxes_temp(8)
+   
+    PrincipalAxesCorrection = PrincipalAxes
+ 
+End Function
+
+Private Function Build_ThirdDirection_InertiaAxis(oHybridShapeFactory , oPoint , DirLine1 , DirLine2 ) 
+    ' build the third direction throught the last computed two direction
+    Dim oHybridShapePlane2Lines 
+    Set oHybridShapePlane2Lines = oHybridShapeFactory.AddNewPlane2Lines(DirLine1, DirLine2)
+    oHybridShapePlane2Lines.Compute
+   
+    Set Build_ThirdDirection_InertiaAxis = oHybridShapeFactory.AddNewLineNormal(oHybridShapePlane2Lines, oPoint, 10000, -10000, True)
+    Build_ThirdDirection_InertiaAxis.Compute
+    Build_ThirdDirection_InertiaAxis.Name = "InertiaAxis-3"
+End Function
+
+Private Function Build_Extremums(oAnyobject, oPart , oHybridShapeFactory , MinMax , hybridShapeLinePtDir1 ,  hybridShapeLinePtDir2 , HybridShapeLinePtDir3 ) 
+    ' calcute the extremums
+    Dim oHybridshapeDirection(2) 
+    Set oHybridshapeDirection(0) = oHybridShapeFactory.AddNewDirection(hybridShapeLinePtDir1)
+    Set oHybridshapeDirection(1) = oHybridShapeFactory.AddNewDirection(hybridShapeLinePtDir2)
+    Set oHybridshapeDirection(2) = oHybridShapeFactory.AddNewDirection(HybridShapeLinePtDir3)
+   
+    Dim oReference 
+    Set oReference = oPart.CreateReferenceFromObject(oAnyobject)
+ 
+    Set Build_Extremums = oHybridShapeFactory.AddNewExtremum(oReference, oHybridshapeDirection(0), MinMax)
+   
+    If Not hybridShapeLinePtDir2 Is Nothing Then
+   
+     Build_Extremums.Direction2 = oHybridshapeDirection(1)
+     Build_Extremums.ExtremumType2 = 1
+   
+    End If
+   
+    If Not HybridShapeLinePtDir3 Is Nothing Then
+   
+     Build_Extremums.Direction3 = oHybridshapeDirection(2)
+     Build_Extremums.ExtremumType3 = 1
+   
+    End If
+ 
+    Build_Extremums.Compute
+   
+End Function
+
+Private Function Build_PolyLine(oHybridShapeFactory , oExtremum)
+    'drawing the polyline according the extremums
+    Set Build_PolyLine = oHybridShapeFactory.AddNewPolyline
+ 
+    Dim iIndex 
+    Dim oReference 
+    For iIndex = 0 To UBound(oExtremum)
+   
+         Build_PolyLine.InsertElement oExtremum(iIndex), iIndex + 1
+       
+    Next
+    Build_PolyLine.Compute
+    Build_PolyLine.Name = "ExtremumPolyline"
+ 
+End Function
+
+Private Function Build_Planes(oHybridShapeFactory , oFinalExtremum , InertiaAxis ) 
+    'buoild plane according the inertia direction and the extremums
+    Set Build_Planes = oHybridShapeFactory.AddNewPlaneNormal(InertiaAxis, oFinalExtremum)
+    Build_Planes.Compute
+ 
+End Function
+
+Private Function Build_LinePtDir(oHybridShapeFactory , oPoint , oLimitPlane1 , oLimitPlane2 ) 
+   
+    Dim oDirection 
+    Set oDirection = oHybridShapeFactory.AddNewDirection(oLimitPlane1)
+    Set Build_LinePtDir = oHybridShapeFactory.AddNewLinePtDir(oPoint, oDirection, 1000, -1000, True)
+    Build_LinePtDir.FirstUptoElem = oLimitPlane1
+    Build_LinePtDir.SecondUptoElem = oLimitPlane2
+    Build_LinePtDir.Compute
+   
+End Function
+
+Private Function Build_ExtrudedSurface(oHybridShapeFactory , oAnyobject , oLimitPlane1 , oLimitPlane2 ) 
+ 
+    Dim oDirection 
+    Set oDirection = oHybridShapeFactory.AddNewDirection(oLimitPlane1)
+   
+    Set Build_ExtrudedSurface = oHybridShapeFactory.AddNewExtrude(oAnyobject, 100, 100, oDirection)
+    Build_ExtrudedSurface.FirstUptoElement = oLimitPlane1
+    Build_ExtrudedSurface.SecondUptoElement = oLimitPlane2
+    Build_ExtrudedSurface.FirstLimitType = 2
+    Build_ExtrudedSurface.SecondLimitType = 2
+   
+    Build_ExtrudedSurface.Compute
+ 
+End Function
+

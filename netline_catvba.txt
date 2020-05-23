@@ -1,0 +1,147 @@
+Sub CATmain()
+    '画百格线
+    '变量声明百格线
+    Dim oDoc
+    Set oDoc = CATIA.ActiveDocument
+    
+    Dim oSel
+    Set oSel = oDoc.Selection
+    
+    Dim oSheet
+    Set oSheet = oDoc.Sheets.ActiveSheet
+    
+    Dim oPaperWidth
+    oPaperWidth = oSheet.GetPaperWidth
+    
+    Dim oView 'As DrawingView
+    Set oView = oSheet.Views.ActiveView
+    
+    Dim F2d
+    Set F2d = oView.Factory2D
+    
+    Dim oTexts
+    Set oTexts = oView.Texts
+    
+    Dim GB 'generativeBeavior get the projection plane to determine the X, Y or Z
+    Set GB = oView.GenerativeBehavior
+    
+    Dim oArr(3)
+    oView.Size oArr '获取到相对于图纸框的BoundingBox
+    
+    '定义相对view坐标系的bounding box
+    Dim xMin, xMax, yMin, yMax
+    xMin = oArr(0) - oView.xAxisData
+    xMax = oArr(1) - oView.xAxisData
+    yMin = oArr(2) - oView.yAxisData
+    yMax = oArr(3) - oView.yAxisData
+    
+    '定义取整后的bounding box最大最小值
+    '如果最远处的百格线与bounding box相隔超过50，则放弃这根线
+    '如果小于50，侧保留
+    
+    If xMin > 0 And (xMin - (xMin \ 100) * 100) < 50 Then
+        hStart = xMin \ 100
+    ElseIf xMin > 0 And (xMin - (xMin \ 100) * 100) >= 50 Then
+         hStart = xMin \ 100 + 1
+    ElseIf xMin <= 0 And (xMin - (xMin \ 100 - 1) * 100) < 50 Then
+        hStart = (xMin \ 100 - 1)
+    Else
+        hStart = (xMin \ 100)
+    End If
+
+    If xMax > 0 And ((xMax \ 100 + 1) * 100 - xMax) < 50 Then
+        hEnd = (xMax \ 100 + 1)
+    ElseIf xMax > 0 And ((xMax \ 100 + 1) * 100 - xMax) >= 50 Then
+        hEnd = (xMax \ 100)
+    ElseIf xMax <= 0 And ((xMax \ 100) * 100 - xMax) < 50 Then
+        hEnd = (xMax \ 100)
+    Else
+        hEnd = (xMax \ 100 - 1)
+    End If
+
+    If yMin > 0 And (yMin - (yMin \ 100) * 100) < 50 Then
+        vStart = (yMin \ 100)
+    ElseIf yMin > 0 And (yMin - (yMin \ 100) * 100) >= 50 Then
+        vStart = (yMin \ 100 + 1)
+    ElseIf yMin <= 0 And (yMin - (yMin \ 100 - 1) * 100) < 50 Then
+        vStart = (yMin \ 100 - 1)
+    Else
+        vStrat = (yMin \ 100)
+    End If
+    
+    If yMax > 0 And ((yMax \ 100 + 1) * 100 - yMax) < 50 Then
+        vEnd = (yMax \ 100 + 1)
+    ElseIf yMax > 0 And ((yMax \ 100 + 1) * 100 - yMax) >= 50 Then
+        vEnd = (yMin \ 100)
+    ElseIf yMax <= 0 And ((yMax \ 100) * 100 - yMax) < 50 Then
+        vEnd = yMax \ 100
+    Else
+        vEnd = yMax \ 100 - 1
+    
+    End If
+    
+    ' add the X, Y, Z coordinates
+    'get the projection plane
+    Dim x1, y1, z1, x2, y2, z2
+    GB.GetProjectionPlane x1, y1, z1, x2, y2, z2
+    
+    ' draw horizontal line
+    Dim oLine, oText, TxStr
+    oSel.Clear
+    If (x2 = 0 And y2 = 0) Or (y2 = 0 And z2 = 0) Or (z2 = 0 And x2 = 0) Then
+        For i = vStart To vEnd
+            Set oLine = F2d.CreateLine(hStart * 100 - 30, i * 100, hEnd * 100 + 30, i * 100)
+            oSel.Add oLine
+            If x2 <> 0 Then
+                TxStr = "X " & x2 * i * 100
+            ElseIf y2 <> 0 Then
+                TxStr = "Y " & y2 * i * 100
+            ElseIf z2 <> 0 Then
+                TxStr = "Z " & z2 * i * 100
+            End If
+            Set oText = oTexts.Add(TxStr, hStart * 100 - 40, i * 100)
+            oText.AnchorPosition = catMiddleRight
+            
+            If oPaperWidth > 841 Then
+                oText.SetFontSize 0, 0, 5#
+            Else
+                oText.SetFontSize 0, 0, 3.5
+            End If
+                        
+            oText.ActivateFrame (catOblong)
+        Next
+    End If
+    
+    'draw vertical line
+    If (x1 = 0 And y1 = 0) Or (y1 = 0 And z1 = 0) Or (z1 = 0 And x1 = 0) Then
+        For i = hStart To hEnd
+            Set oLine = F2d.CreateLine(i * 100, vStart * 100 - 30, i * 100, vEnd * 100 + 30)
+            oSel.Add oLine
+            If x1 <> 0 Then
+                TxStr = "X " & x1 * i * 100
+            ElseIf y1 <> 0 Then
+                TxStr = "Y " & y1 * i * 100
+            ElseIf z1 <> 0 Then
+                TxStr = "Z " & z1 * i * 100
+            End If
+            Set oText = oTexts.Add(TxStr, i * 100, vEnd * 100 + 40)
+            oText.AnchorPosition = catTopCenter
+            
+            If oPaperWidth > 841 Then
+                oText.SetFontSize 0, 0, 5#
+            Else
+                oText.SetFontSize 0, 0, 3.5
+            End If
+            
+            oText.ActivateFrame (catOblong)
+            'oText.Angle = 90
+    Next
+    End If
+    oSel.VisProperties.SetRealWidth 1, 1
+    
+    
+    
+    
+    
+
+End Sub
