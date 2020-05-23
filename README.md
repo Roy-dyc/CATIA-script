@@ -1,4 +1,3 @@
-# hello-world
-This is the important start for me to organize may study about coding.
+# CATIA script for automatic work
 
-After a long time, I come back now. The github is an amazing tool.
+I am an product engineer, and find some easy but repetitive work when using CATIA. So I learn the script language for CATIA to write the repetitive work to the code script, and it was easy to use in my working environment. 
